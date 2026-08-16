@@ -45,6 +45,11 @@ path = "examples/quickstart.rs"
 required-features = ["openai"]
 
 [[example]]
+name = "background_tools"
+path = "examples/background_tools.rs"
+required-features = ["openai"]
+
+[[example]]
 name = "chat"
 path = "examples/chat.rs"
 required-features = ["openai"]

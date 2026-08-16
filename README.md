@@ -148,7 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 （一次性）；流式协议的适配器覆盖 `complete_stream`——`midturn::adapters::http::HttpModel`
 三种协议都做了。
 
-## 之后你会想做的四件事
+## 之后你会想做的五件事
 
 **1. 运行期间继续说话。** `enqueue` 任何时候都收。会话在跑，内容会在它的下一个边界进入模型；
 会话空闲，内容把它叫醒。三种交付语义：
@@ -183,7 +183,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 下一轮看得见的出口」——已结算的结果与未知的槽都会以中断回执写进对话。exactly-once 它给不了，
 外部幂等键还是你的事。
 
-**4. 看见发生了什么。** 三个观察端：`with_observer`（不带正文的事件：开跑、边界排空、模型请求、
+**4. 让工具在后台跑，不卡这一轮。** 长任务（部署、跑测试、爬一批页面）不需要内核多做任何事：
+把工具的语义定义成「启动一个后台任务并返回句柄」，它立刻返回 `{"job": 7, "state": "running"}`
+——这是一个真实的结果，不是占位符；运行时自己持有任务表，任务跑完就把结果作为一条
+`MailboxInput` 投回会话（要模型立刻处理就 `next_model_request`，空闲时它会把会话叫醒；只想
+搭便车就 `passive`）。`list_jobs` / `cancel_job` 也只是运行时自己的普通工具，任务表在它手里，
+列表不会漂移。内核始终只看到「一次成功的工具调用」和「一条新输入」。不少 harness 有这个能力，
+但一般是写死在应用里的；这里它是运行时的一个模式，`examples/background_tools.rs` 是完整跑通的
+版本（第一轮：模型启动任务、告诉用户"已开始"；任务完成 → 结果进信箱 → 会话自己开第二轮 →
+模型转告结果）。
+
+**5. 看见发生了什么。** 三个观察端：`with_observer`（不带正文的事件：开跑、边界排空、模型请求、
 工具批次、压缩、终态）、`with_content_observer`（完整对话、模型输出、工具结果——不装就不构造）、
 `with_stream_observer`（模型增量）。三条流共用一个序号，按序号归并就是完整的时间线。都得在
 第一次异步调用之前装。
@@ -228,6 +238,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 | 例子 | 干什么 | 怎么跑 |
 |---|---|---|
 | `quickstart` | 上面那段 | `AGENT_API_KEY=… cargo run --example quickstart --features openai` |
+| `background_tools` | 后台任务：工具立刻返回句柄，结果稍后从信箱回来；`list_jobs` / `cancel_job` 都是普通工具 | `AGENT_API_KEY=… cargo run --example background_tools --features openai` |
 | `chat` | 交互式对话；提前执行的增量工具运行时参考实现；运行期间可插话 | `AGENT_API_KEY=… cargo run --example chat --features openai` |
 | `protocol_smoke` | 三种协议同一套场景冒烟（`chat` / `responses` / `anthropic` / `all`） | 见文件头；`MODEL_WIRE_LOG` 必须为 `off` |
 | `lead-time` | 实测工具调用交到运行时手上比整份响应早多少 | 见文件头 |
