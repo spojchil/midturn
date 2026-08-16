@@ -1,0 +1,15 @@
+/target/
+
+# 本地编辑器与操作系统状态。
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 本地配置、凭据与诊断输出。
+.env
+.env.*
+!.env.example
+/secrets/
+*-key
+*.log

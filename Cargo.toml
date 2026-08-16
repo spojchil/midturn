@@ -1,0 +1,55 @@
+[package]
+name = "midturn"
+description = "Provider-neutral agent kernel: a model turn is not atomic — tool calls leave early, new input enters at explicit boundaries"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.86"
+license = "MIT"
+readme = "README.md"
+publish = false
+
+[features]
+default = []
+# 共享 HTTP transport；协议 feature 会自动启用它。
+http = ["dep:reqwest"]
+# OpenAI Chat Completions 与 Responses API。
+openai = ["http"]
+# Anthropic Messages API。
+anthropic = ["http"]
+# 构建当前提供的全部正式协议 adapter。
+all-adapters = ["openai", "anthropic"]
+# SQLite checkpoint backend；默认构建不携带数据库运行时。
+sqlite = ["dep:rusqlite"]
+
+[dependencies]
+reqwest = { version = "0.13", features = ["json"], optional = true }
+rusqlite = { version = "0.37", features = ["bundled"], optional = true }
+# `rc` 让 Arc<Vec<TranscriptItem>> 可以直接序列化：对话记录在内存状态和 checkpoint
+# 之间共享同一份数据，回滚快照与 checkpoint 构建都只做引用计数，不再深拷贝整段历史。
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+
+[[example]]
+name = "protocol_smoke"
+path = "examples/protocol-smoke/main.rs"
+test = true
+required-features = ["all-adapters"]
+
+[[example]]
+name = "quickstart"
+path = "examples/quickstart.rs"
+required-features = ["openai"]
+
+[[example]]
+name = "chat"
+path = "examples/chat.rs"
+required-features = ["openai"]
+
+[[example]]
+name = "lead-time"
+path = "examples/lead-time.rs"
+required-features = ["all-adapters"]
