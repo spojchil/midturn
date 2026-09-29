@@ -416,9 +416,26 @@ impl Core {
         receipt: &InterruptedToolBatchReceipt,
     ) -> Result<InputMessage, AgentError> {
         let mut visible_calls = receipt.calls.clone();
+        let mut images = Vec::new();
         for call in &mut visible_calls {
             if let InterruptedToolCallOutcome::Settled(result) = &mut call.outcome {
                 result.metadata.clear();
+                // JSON 内的图片不会成为视觉输入。图片移到同一耐久回执的顶层，
+                // 原位置保留附件序号，避免把 Base64 同时作为长文本发送给模型。
+                for (index, part) in result.content.iter_mut().enumerate() {
+                    if matches!(part, ContentPart::Image { .. }) {
+                        let attachment_index = images.len() / 2;
+                        images.push(ContentPart::json(serde_json::json!({
+                            "image_attachment_index": attachment_index,
+                            "image_tool_call_id": result.call_id.as_str(),
+                            "content_index": index,
+                        })));
+                        images.push(part.clone());
+                        *part = ContentPart::json(serde_json::json!({
+                            "image_attachment_index": attachment_index,
+                        }));
+                    }
+                }
             }
         }
         let calls = serde_json::to_value(&visible_calls).map_err(|error| {
@@ -427,15 +444,17 @@ impl Core {
                 format!("serialize_interrupted_tool_receipt_failed:{error}"),
             )
         })?;
+        let mut content = vec![ContentPart::json(serde_json::json!({
+            "kind": DurableFactKind::InterruptedToolBatch.as_wire(),
+            "aborted": true,
+            "batch_attempt_id": receipt.batch_attempt_id.as_str(),
+            "calls": calls,
+            "unconfirmed_remainder": "discarded"
+        }))];
+        content.extend(images);
         Ok(InputMessage::new(
             self.config.interrupted_tool_receipt_role.clone(),
-            vec![ContentPart::json(serde_json::json!({
-                "kind": DurableFactKind::InterruptedToolBatch.as_wire(),
-                "aborted": true,
-                "batch_attempt_id": receipt.batch_attempt_id.as_str(),
-                "calls": calls,
-                "unconfirmed_remainder": "discarded"
-            }))],
+            content,
         ))
     }
 }

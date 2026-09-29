@@ -233,6 +233,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `all-adapters` | 两者都要 |
 | `sqlite` | bundled SQLite checkpoint backend |
 
+## 图片输入与工具返回图片
+
+`ContentPart::Image` 是统一的图片输入类型，可与文字、JSON 按顺序混排，也支持一条消息
+包含多张图片。内核不读取本地文件、不下载 URL，也不替你选择视觉模型：应用负责准备图片，
+adapter 负责协议编码。一次性与流式请求共用这条编码路径。
+
+```rust
+use midturn::{ContentPart, InputMessage, ToolCallId, ToolResult};
+
+let message = InputMessage::new("user", vec![
+    ContentPart::image_url("https://example.com/chart.png"),
+    ContentPart::text("解释这张图表。"),
+]);
+
+// 本地图片由应用读取并进行标准 Base64 编码；这里传入的是不含 data: 前缀的编码。
+// MIME 类型支持 image/jpeg、image/png、image/gif、image/webp。
+fn image_result(call_id: ToolCallId, encoded_png: String) -> ToolResult {
+    ToolResult::success(call_id, vec![ContentPart::image_base64("image/png", encoded_png)])
+}
+```
+
+| 协议 | 用户图片输入 | 图片工具结果 | 图片编码 |
+|---|---|---|---|
+| OpenAI Chat Completions | 支持 | 明确报错 | `image_url`，Base64 转为 data URL |
+| OpenAI Responses | 支持 | `function_call_output.output` 内容数组 | `input_image`，Base64 转为 data URL |
+| Anthropic Messages | 支持 | `tool_result.content` 内容数组 | `image.source`，区分 URL 与 Base64 |
+
+Chat 的标准工具消息只接受文本；图片工具请选择 Responses / Anthropic，或由应用显式把
+图片作为后续用户输入投递。adapter 不会偷偷增加用户消息或把图片降级成文字。
+图片角色校验在 `role_mappings` 映射之后进行：Chat / Anthropic 的图片输入限于 `user`；
+Responses 接受非 assistant 输入角色，具体模型可能进一步限制。规范化的模型输出图片暂不支持，
+服务商原生输出继续按原有 `Opaque` / `provider_data` 机制保留。
+
+纯文本请求保留原有格式。非法 URL 协议、MIME 类型与 Base64 会在请求发出前返回
+`AgentErrorKind::Model`；URL 必须是 HTTP(S)，不要把本地路径或 data URL 传给 `image_url`。
+这里不校验像素内容，也不硬编码厂商的尺寸、张数、费用或模型清单。
+服务商文件 ID、图片精度参数和自动上传暂不属于统一图片接口。
+
+图片会随信箱、对话、工具结果一起序列化到 checkpoint；中断工具回执会把已结算图片恢复为
+顶层图片块，保留调用关联，不将 Base64 当成长文本回放。自定义恢复回执角色也需映射为
+支持图片的角色。Base64 会增大 checkpoint 与后续请求；URL 的可访问性、有效期以及压缩时
+如何保留图片由应用管理；现有信箱字节预算仍然生效。
+
+协议依据：[OpenAI 图片输入](https://developers.openai.com/api/docs/guides/images-vision)、
+[Chat 工具消息](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)、
+[Responses 工具结果](https://developers.openai.com/api/docs/guides/function-calling)、
+[Claude 图片输入](https://platform.claude.com/docs/en/build-with-claude/vision)。
+
 ## 示例
 
 | 例子 | 干什么 | 怎么跑 |

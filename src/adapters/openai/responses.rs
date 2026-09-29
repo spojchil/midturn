@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use serde_json::{json, Map, Value};
 
 use crate::adapters::http::{
-    content_as_text, merge_request_fields, model_error, parse_arguments, SseEvent, StreamDecode,
-    WireCodec, WireStreamDecoder,
+    content_as_text, has_images, image_url, merge_request_fields, model_error, parse_arguments,
+    SseEvent, StreamDecode, WireCodec, WireStreamDecoder,
 };
 use crate::ports::{ModelRequest, ModelResponse, ModelStreamEvent};
 use crate::types::{
@@ -667,9 +667,12 @@ fn encode_input(
         match item {
             TranscriptItem::Input(message) => {
                 let role = wire_role(&message.role, role_mappings)?;
+                if role == "assistant" && has_images(&message.content) {
+                    return Err(model_error("openai_responses_images_in_assistant_message"));
+                }
                 input.push(json!({
                     "role": role,
-                    "content": content_as_text(&message.content),
+                    "content": encode_content(&message.content)?,
                 }));
             }
             TranscriptItem::ModelOutput(output) => {
@@ -682,28 +685,42 @@ fn encode_input(
                         validate_raw_output(output, raw)?;
                         input.extend(raw.iter().cloned());
                     }
-                    None => encode_canonical_output(output, &mut input),
+                    None => encode_canonical_output(output, &mut input)?,
                 }
             }
             TranscriptItem::ToolResults(batch) => {
-                input.extend(batch.results.iter().map(|result| {
-                    json!({
+                for result in &batch.results {
+                    input.push(json!({
                         "type": "function_call_output",
                         "call_id": result.call_id.as_str(),
-                        "output": content_as_text(&result.content),
-                    })
-                }));
+                        "output": encode_content(&result.content)?,
+                    }));
+                }
             }
         }
     }
     Ok(input)
 }
 
-fn encode_canonical_output(output: &ModelOutput, input: &mut Vec<Value>) {
+fn encode_content(parts: &[ContentPart]) -> Result<Value, AgentError> {
+    if !has_images(parts) {
+        return content_as_text(parts).map(Value::String);
+    }
+    parts.iter().map(|part| {
+        Ok(match part {
+            ContentPart::Image { source } => json!({
+                "type": "input_image", "image_url": image_url(source)?,
+            }),
+            other => json!({"type": "input_text", "text": content_as_text(std::slice::from_ref(other))?}),
+        })
+    }).collect::<Result<Vec<_>, _>>().map(Value::Array)
+}
+
+fn encode_canonical_output(output: &ModelOutput, input: &mut Vec<Value>) -> Result<(), AgentError> {
     if !output.content.is_empty() {
         input.push(json!({
             "role": "assistant",
-            "content": content_as_text(&output.content),
+            "content": content_as_text(&output.content)?,
         }));
     }
     input.extend(output.tool_calls.iter().map(|call| {
@@ -721,6 +738,7 @@ fn encode_canonical_output(output: &ModelOutput, input: &mut Vec<Value>) {
         }
         item
     }));
+    Ok(())
 }
 
 fn decode_message_content(item: &Value, content: &mut Vec<ContentPart>) -> Result<(), AgentError> {

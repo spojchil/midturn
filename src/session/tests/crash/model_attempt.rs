@@ -107,9 +107,12 @@ async fn crash_after_delivery_requires_reconciliation_then_resumes_with_a_receip
         .session
         .reconcile_effect(
             &effect_ids[0],
-            DurableEffectOutcome::Settled(ToolResult::success_json(
+            DurableEffectOutcome::Settled(ToolResult::success(
                 ToolCallId::new("in-flight"),
-                json!({"recovered": true}),
+                vec![
+                    ContentPart::json(json!({"recovered": true})),
+                    ContentPart::image_url("https://example.com/recovered.png"),
+                ],
             )),
         )
         .await
@@ -130,6 +133,17 @@ async fn crash_after_delivery_requires_reconciliation_then_resumes_with_a_receip
         .iter()
         .any(|item| has_json_fact_kind(item, "interrupted_tool_batch_receipt")));
     assert!(tool_call_ids(&request.transcript).is_empty());
+    let receipt = request
+        .transcript
+        .iter()
+        .find(|item| has_json_fact_kind(item, "interrupted_tool_batch_receipt"))
+        .unwrap();
+    let TranscriptItem::Input(message) = receipt else {
+        unreachable!()
+    };
+    assert!(message
+        .content
+        .contains(&ContentPart::image_url("https://example.com/recovered.png")));
 }
 
 /// 表第 4 行：交付的槽已经提前结算（`settled` 返回 Ok = 已落盘），模型还在流。

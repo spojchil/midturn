@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use serde_json::{json, Map, Value};
 
 use crate::adapters::http::{
-    content_as_text, merge_request_fields, model_error, parse_arguments, SseEvent, StreamDecode,
-    WireCodec, WireStreamDecoder,
+    content_as_text, has_images, image_url, merge_request_fields, model_error, parse_arguments,
+    SseEvent, StreamDecode, WireCodec, WireStreamDecoder,
 };
 use crate::ports::{ModelRequest, ModelResponse, ModelStreamEvent};
 use crate::types::{
@@ -780,9 +780,12 @@ fn encode_messages(
         match item {
             TranscriptItem::Input(message) => {
                 let role = wire_role(&message.role, role_mappings)?;
+                if role != "user" && has_images(&message.content) {
+                    return Err(model_error("openai_chat_images_require_user_role"));
+                }
                 messages.push(json!({
                     "role": role,
-                    "content": content_as_text(&message.content),
+                    "content": encode_content(&message.content)?,
                 }));
             }
             TranscriptItem::ModelOutput(output) => {
@@ -796,7 +799,7 @@ fn encode_messages(
                     "content": if output.content.is_empty() {
                         Value::Null
                     } else {
-                        Value::String(content_as_text(&output.content))
+                        Value::String(content_as_text(&output.content)?)
                     },
                 });
                 if !output.tool_calls.is_empty() {
@@ -823,17 +826,42 @@ fn encode_messages(
                 messages.push(message);
             }
             TranscriptItem::ToolResults(batch) => {
-                messages.extend(batch.results.iter().map(|result| {
-                    json!({
+                for result in &batch.results {
+                    if has_images(&result.content) {
+                        return Err(model_error(
+                            "openai_chat_tool_result_images_unsupported:use_responses_or_anthropic",
+                        ));
+                    }
+                    messages.push(json!({
                         "role": "tool",
                         "tool_call_id": result.call_id.as_str(),
-                        "content": content_as_text(&result.content),
-                    })
-                }));
+                        "content": content_as_text(&result.content)?,
+                    }));
+                }
             }
         }
     }
     Ok(messages)
+}
+
+fn encode_content(parts: &[ContentPart]) -> Result<Value, AgentError> {
+    if !has_images(parts) {
+        return content_as_text(parts).map(Value::String);
+    }
+    parts
+        .iter()
+        .map(|part| {
+            Ok(match part {
+                ContentPart::Image { source } => json!({
+                    "type": "image_url", "image_url": {"url": image_url(source)?},
+                }),
+                other => {
+                    json!({"type": "text", "text": content_as_text(std::slice::from_ref(other))?})
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Value::Array)
 }
 
 fn wire_role<'a>(

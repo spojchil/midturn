@@ -4,12 +4,14 @@ use std::collections::BTreeMap;
 
 use serde_json::{json, Map, Value};
 
-use crate::adapters::http::{content_as_text, merge_request_fields, model_error, WireCodec};
+use crate::adapters::http::{
+    content_as_text, has_images, merge_request_fields, model_error, validate_image, WireCodec,
+};
 use crate::adapters::http::{SseEvent, StreamDecode, WireStreamDecoder};
 use crate::ports::{ModelRequest, ModelResponse, ModelStreamEvent};
 use crate::types::{
-    AgentError, ContentPart, JsonObject, ModelOutput, ModelUsage, ToolCall, ToolCallSlot,
-    ToolResultStatus, TranscriptItem,
+    AgentError, ContentPart, ImageSource, JsonObject, ModelOutput, ModelUsage, ToolCall,
+    ToolCallSlot, ToolResultStatus, TranscriptItem,
 };
 
 const RAW_CONTENT_KEY: &str = "anthropic.messages.content";
@@ -782,7 +784,7 @@ fn encode_conversation(
         match item {
             TranscriptItem::Input(message) => match wire_role(&message.role, role_mappings)? {
                 "system" | "developer" if messages.is_empty() => {
-                    system.extend(content_blocks(&message.content));
+                    system.extend(content_blocks(&message.content, false)?);
                 }
                 "system" | "developer" => {
                     return Err(model_error(
@@ -790,7 +792,11 @@ fn encode_conversation(
                     ));
                 }
                 role @ ("user" | "assistant") => {
-                    push_message(&mut messages, role, content_blocks(&message.content))?;
+                    push_message(
+                        &mut messages,
+                        role,
+                        content_blocks(&message.content, role == "user")?,
+                    )?;
                 }
                 role => {
                     return Err(model_error(format!(
@@ -807,7 +813,7 @@ fn encode_conversation(
                         validate_raw_content(output, raw)?;
                         raw.clone()
                     }
-                    None => canonical_assistant_blocks(output),
+                    None => canonical_assistant_blocks(output)?,
                 };
                 push_message(&mut messages, "assistant", blocks)?;
             }
@@ -816,14 +822,18 @@ fn encode_conversation(
                     .results
                     .iter()
                     .map(|result| {
-                        json!({
+                        Ok(json!({
                             "type": "tool_result",
                             "tool_use_id": result.call_id.as_str(),
-                            "content": content_as_text(&result.content),
+                            "content": if has_images(&result.content) {
+                                Value::Array(content_blocks(&result.content, true)?)
+                            } else {
+                                Value::String(content_as_text(&result.content)?)
+                            },
                             "is_error": result.status == ToolResultStatus::Error,
-                        })
+                        }))
                     })
-                    .collect();
+                    .collect::<Result<Vec<_>, AgentError>>()?;
                 // 完整批次必须位于同一条 user message；后续 steering 文本会追加在其后。
                 push_message(&mut messages, "user", blocks)?;
             }
@@ -859,26 +869,41 @@ fn wire_role<'a>(
     }
 }
 
-fn content_blocks(parts: &[ContentPart]) -> Vec<Value> {
+fn content_blocks(parts: &[ContentPart], allow_images: bool) -> Result<Vec<Value>, AgentError> {
+    if !allow_images && has_images(parts) {
+        return Err(model_error("anthropic_messages_images_require_user_role"));
+    }
     parts
         .iter()
-        .map(|part| match part {
-            ContentPart::Text { text } => json!({"type": "text", "text": text}),
-            ContentPart::Json { value } => {
-                json!({"type": "text", "text": value.to_string()})
-            }
-            ContentPart::Opaque { kind, data } if kind.starts_with("anthropic.messages.") => {
-                data.clone()
-            }
-            ContentPart::Opaque { data, .. } => {
-                json!({"type": "text", "text": data.to_string()})
-            }
+        .map(|part| {
+            Ok(match part {
+                ContentPart::Text { text } => json!({"type": "text", "text": text}),
+                ContentPart::Image { source } => {
+                    validate_image(source)?;
+                    let source = match source {
+                        ImageSource::Url { url } => json!({"type": "url", "url": url}),
+                        ImageSource::Base64 { media_type, data } => json!({
+                            "type": "base64", "media_type": media_type, "data": data,
+                        }),
+                    };
+                    json!({"type": "image", "source": source})
+                }
+                ContentPart::Json { value } => {
+                    json!({"type": "text", "text": value.to_string()})
+                }
+                ContentPart::Opaque { kind, data } if kind.starts_with("anthropic.messages.") => {
+                    data.clone()
+                }
+                ContentPart::Opaque { data, .. } => {
+                    json!({"type": "text", "text": data.to_string()})
+                }
+            })
         })
         .collect()
 }
 
-fn canonical_assistant_blocks(output: &ModelOutput) -> Vec<Value> {
-    let mut blocks = content_blocks(&output.content);
+fn canonical_assistant_blocks(output: &ModelOutput) -> Result<Vec<Value>, AgentError> {
+    let mut blocks = content_blocks(&output.content, false)?;
     blocks.extend(output.tool_calls.iter().map(|call| {
         json!({
             "type": "tool_use",
@@ -887,7 +912,7 @@ fn canonical_assistant_blocks(output: &ModelOutput) -> Vec<Value> {
             "input": call.arguments,
         })
     }));
-    blocks
+    Ok(blocks)
 }
 
 fn push_message(

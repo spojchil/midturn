@@ -567,16 +567,17 @@ pub(crate) fn model_error(summary: impl Into<String>) -> AgentError {
 }
 
 #[cfg(any(feature = "openai", feature = "anthropic"))]
-pub(crate) fn content_as_text(parts: &[ContentPart]) -> String {
+pub(crate) fn content_as_text(parts: &[ContentPart]) -> Result<String, AgentError> {
     parts
         .iter()
         .map(|part| match part {
-            ContentPart::Text { text } => text.clone(),
-            ContentPart::Json { value } => value.to_string(),
-            ContentPart::Opaque { data, .. } => data.to_string(),
+            ContentPart::Text { text } => Ok(text.clone()),
+            ContentPart::Json { value } => Ok(value.to_string()),
+            ContentPart::Opaque { data, .. } => Ok(data.to_string()),
+            ContentPart::Image { .. } => Err(model_error("image_in_text_only_content")),
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect::<Result<Vec<_>, _>>()
+        .map(|parts| parts.join("\n"))
 }
 
 #[cfg(feature = "openai")]

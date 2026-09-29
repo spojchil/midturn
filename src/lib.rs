@@ -67,7 +67,7 @@ pub use session::{
 };
 pub use types::{
     durable_fact_kind, validate_transcript, AbortClassification, AbortedSlot, AgentError,
-    AgentErrorKind, ContentPart, DurableFactKind, IncrementalToolCall, InputMessage,
+    AgentErrorKind, ContentPart, DurableFactKind, ImageSource, IncrementalToolCall, InputMessage,
     InterruptedToolBatchReceipt, InterruptedToolCallOutcome, InterruptedToolCallReceipt,
     JsonObject, ModelOutput, ModelUsage, RunId, ToolBatchAbortReason, ToolBatchAttemptId,
     ToolBatchId, ToolBatchStart, ToolCall, ToolCallBatch, ToolCallId, ToolCallSlot, ToolDefinition,

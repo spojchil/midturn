@@ -1,11 +1,18 @@
 //! 协议适配器共用的 HTTP 配置与模型实现。
 
 mod config;
+mod image;
 mod sse;
 mod transport;
 
 pub use config::{HttpAuth, HttpModelConfig, WireLogPolicy, DEFAULT_MAX_RESPONSE_BYTES};
 pub use transport::{HttpModel, Protocol};
+
+pub(crate) use image::has_images;
+#[cfg(feature = "openai")]
+pub(crate) use image::image_url;
+#[cfg(feature = "anthropic")]
+pub(crate) use image::validate_image;
 
 #[cfg(any(feature = "openai", feature = "anthropic"))]
 pub(crate) use sse::SseEvent;

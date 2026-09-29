@@ -183,18 +183,57 @@ impl ToolCallSlot {
     }
 }
 
+/// 图片来源。内核只保存数据，不读取文件、下载 URL 或上传到服务商。
+///
+/// URL 必须是服务商可访问的 HTTP(S) 地址；本地文件应由应用读取并编码为 Base64。
+/// Base64 使用标准字母表与 padding，不含 `data:` 前缀。内置适配器支持 JPEG、PNG、
+/// GIF、WebP；实际图片格式、尺寸、数量和模型能力由服务商校验。
+#[non_exhaustive]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ImageSource {
+    Url { url: String },
+    Base64 { media_type: String, data: String },
+}
+
 /// 刻意保持精简的内容中间表示。未知的多模态或服务商原生内容块通过 `Opaque`
 /// 无损保留，并且仅由模型适配器解释。
 #[non_exhaustive]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentPart {
-    Text { text: String },
-    Json { value: Value },
-    Opaque { kind: String, data: Value },
+    Text {
+        text: String,
+    },
+    Json {
+        value: Value,
+    },
+    /// 图片输入；是否允许放在当前消息角色或工具结果中，由适配器决定。
+    Image {
+        source: ImageSource,
+    },
+    Opaque {
+        kind: String,
+        data: Value,
+    },
 }
 
 impl ContentPart {
+    pub fn image_url(url: impl Into<String>) -> Self {
+        Self::Image {
+            source: ImageSource::Url { url: url.into() },
+        }
+    }
+
+    pub fn image_base64(media_type: impl Into<String>, data: impl Into<String>) -> Self {
+        Self::Image {
+            source: ImageSource::Base64 {
+                media_type: media_type.into(),
+                data: data.into(),
+            },
+        }
+    }
+
     pub fn text(text: impl Into<String>) -> Self {
         Self::Text { text: text.into() }
     }
@@ -489,7 +528,9 @@ impl ModelOutput {
             .iter()
             .filter_map(|part| match part {
                 ContentPart::Text { text } => Some(text.as_str()),
-                ContentPart::Json { .. } | ContentPart::Opaque { .. } => None,
+                ContentPart::Json { .. }
+                | ContentPart::Image { .. }
+                | ContentPart::Opaque { .. } => None,
             })
             .collect::<Vec<_>>()
             .join("")

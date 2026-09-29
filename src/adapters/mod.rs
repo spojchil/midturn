@@ -12,3 +12,6 @@ pub mod anthropic;
 
 #[cfg(all(test, any(feature = "openai", feature = "anthropic")))]
 mod tests;
+
+#[cfg(test)]
+mod image_tests;

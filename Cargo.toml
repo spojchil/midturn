@@ -11,7 +11,7 @@ publish = false
 [features]
 default = []
 # 共享 HTTP transport；协议 feature 会自动启用它。
-http = ["dep:reqwest"]
+http = ["dep:reqwest", "dep:base64"]
 # OpenAI Chat Completions 与 Responses API。
 openai = ["http"]
 # Anthropic Messages API。
@@ -22,6 +22,7 @@ all-adapters = ["openai", "anthropic"]
 sqlite = ["dep:rusqlite"]
 
 [dependencies]
+base64 = { version = "0.22", optional = true }
 reqwest = { version = "0.13", features = ["json"], optional = true }
 rusqlite = { version = "0.37", features = ["bundled"], optional = true }
 # `rc` 让 Arc<Vec<TranscriptItem>> 可以直接序列化：对话记录在内存状态和 checkpoint

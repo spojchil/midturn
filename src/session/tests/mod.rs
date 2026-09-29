@@ -98,7 +98,9 @@ fn visible_texts(transcript: &[TranscriptItem]) -> Vec<String> {
         })
         .filter_map(|part| match part {
             ContentPart::Text { text } => Some(text.clone()),
-            ContentPart::Json { .. } | ContentPart::Opaque { .. } => None,
+            ContentPart::Json { .. } | ContentPart::Image { .. } | ContentPart::Opaque { .. } => {
+                None
+            }
         })
         .collect()
 }
